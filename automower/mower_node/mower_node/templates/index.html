@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Labeling</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background-color: #f0f0f0;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .view {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      box-sizing: border-box;
+      gap: 20px;
+      padding: 10px;
+    }
+
+    #home {
+      display: flex;
+    }
+
+    button {
+      font-size: 20px;
+      padding: 10px 20px;
+      border: none;
+      background-color: #007bff;
+      color: white;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+
+    button:active {
+      background-color: #003d82;
+    }
+
+    #stopButton {
+      background-color: red;
+      display: none;
+    }
+
+    #stopButton:hover {
+      background-color: darkred;
+    }
+
+    #overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.2);
+      z-index: 999;
+    }
+
+    #mapPage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100vh;
+      justify-content: space-between;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    #mapContainer {
+      display: grid;
+      width: 90vmin;
+      height: 90vmin;
+      max-height: 80vmin;
+      grid-template-columns: repeat(50, 1fr);
+      grid-template-rows: repeat(50, 1fr);
+      gap: 1px;
+    }
+
+    .map-cell {
+      width: 100%;
+      height: 100%;
+    }
+
+    .map--1 { background-color: white; }
+    .map-0 { background-color: #333333; }  /* Asphalt - Dark Gray */
+    .map-1 { background-color: #c2b280; }  /* Gravel - Light Beige */
+    .map-2 { background-color: #6d4f47; }  /* Cobblestone - Dark Brownish Gray */
+    .map-3 { background-color: #8a8a8a; }  /* Stones - Light Gray */
+    .map-4 { background-color: #66cc00; }  /* Grass - Vibrant Green */
+
+
+    #backButtonMap {
+      margin-top: 10px;
+    }
+  </style>
+  <script>
+    let recording = false;
+    let testInterval = null;
+    let mapInterval = null;
+
+    function navigateTo(section) {
+      document.getElementById("home").style.display = "none";
+      document.getElementById("collectData").style.display = "none";
+      document.getElementById("testModel").style.display = "none";
+      document.getElementById("mapPage").style.display = "none";
+
+      if (section === "collect") {
+        document.getElementById("collectData").style.display = "flex";
+      } else if (section === "test") {
+        document.getElementById("testModel").style.display = "flex";
+        startPollingPrediction();
+      } else if (section === "map") {
+        document.getElementById("mapPage").style.display = "flex";
+        startPollingMap();
+      } else {
+        document.getElementById("home").style.display = "flex";
+      }
+    }
+
+    function sendLabel(label) {
+      fetch(`/label/${label.replace(" ", "_").toLowerCase()}`)
+        .then((response) => response.json())
+        .then((data) => {
+          console.log(data.status);
+          recording = true;
+          updateUI();
+        })
+        .catch((error) => console.error("Error:", error));
+    }
+
+    function stopRecording() {
+      fetch(`/stop`)
+        .then((response) => response.json())
+        .then((data) => {
+          console.log(data.status);
+          showOverlay();
+          recording = false;
+          setTimeout(() => {
+            hideOverlay();
+            navigateTo("collect");
+            updateUI();
+          }, 3200);
+        })
+        .catch((error) => console.error("Error:", error));
+    }
+
+    function triggerTestModel() {
+      fetch('/start-test')
+        .then(() => {
+          navigateTo('test');
+        })
+        .catch((err) => console.error(err));
+    }
+
+    function startPollingPrediction() {
+      if (testInterval !== null) return;
+
+      testInterval = setInterval(() => {
+        fetch('/prediction')
+          .then((response) => response.json())
+          .then((data) => {
+            if (data?.status === "idle") {
+              stopTestModel();
+            } else {
+              document.getElementById("placeholderText").innerText = data.prediction;
+            }
+          })
+          .catch((err) => {
+            console.error("Prediction fetch failed:", err);
+            clearInterval(testInterval);
+            testInterval = null;
+            document.getElementById("placeholderText").innerText = "Prediction unavailable.";
+            navigateTo('home');
+          });
+      }, 1000);
+    }
+
+    function stopTestModel() {
+      showOverlay(); 
+      fetch('/stop-test')
+        .then(() => {
+          clearInterval(testInterval);
+          testInterval = null;
+          setTimeout(() => {
+            document.getElementById("placeholderText").innerText = "Loading...";
+            hideOverlay(); 
+            navigateTo('home');
+          }, 3200);
+        })
+        .catch((err) => {
+          console.error(err);
+          clearInterval(testInterval);
+          testInterval = null;
+          setTimeout(() => {
+            document.getElementById("placeholderText").innerText = "Loading...";
+            hideOverlay();
+            navigateTo('home');
+          }, 3200);
+        });
+    }
+
+    function startMapBuilding() {
+      fetch('/start-map')
+        .then(() => {
+          navigateTo('map')
+        })
+        .catch((err) => console.error(err));
+    }
+
+    function stopMapBuilding() {
+      showOverlay();
+      fetch('/stop-map')
+        .then(() => {
+          clearInterval(mapInterval);
+          mapInterval = null;
+          setTimeout(() => {
+            hideOverlay();
+            navigateTo('home');
+          }, 3200);
+        })
+        .catch((err) => {
+          console.error("Error stopping map building:", err);
+          clearInterval(mapInterval);
+          mapInterval = null;
+          setTimeout(() => {
+            hideOverlay();
+            navigateTo('home');
+          }, 3200);
+        });
+    }
+
+    function startPollingMap() {
+      if (mapInterval !== null) return;
+
+      const container = document.getElementById("mapContainer");
+
+      mapInterval = setInterval(() => {
+        fetch('/map')
+          .then(response => response.json())
+          .then(data => {
+            container.innerHTML = "";
+            data.map.forEach(row => {
+              row.forEach(value => {
+                const cell = document.createElement("div");
+                cell.classList.add("map-cell");
+                const className = value === -1 ? 'map--1' : `map-${value}`;
+                cell.classList.add(className);
+                container.appendChild(cell);
+              });
+            });
+          })
+          .catch(err => {
+            console.error("Map fetch failed:", err);
+            clearInterval(mapInterval);
+            mapInterval = null;
+          });
+      }, 1000);
+    }
+
+    function updateUI() {
+      const labelButtons = document.querySelectorAll(".label-button");
+      const stopButton = document.getElementById("stopButton");
+      const backButton = document.getElementById("backButtonCollect");
+
+      labelButtons.forEach((button) => {
+        button.style.display = recording ? "none" : "block";
+      });
+
+      stopButton.style.display = recording ? "block" : "none";
+      backButton.style.display = recording ? "none" : "block";
+    }
+
+    function showOverlay() {
+      document.getElementById("overlay").style.display = "block";
+    }
+
+    function hideOverlay() {
+      document.getElementById("overlay").style.display = "none";
+    }
+
+    window.onload = updateUI;
+  </script>
+</head>
+<body>
+  <div id="home" class="view">
+    <button onclick="navigateTo('collect')">Collect Data</button>
+    <button onclick="triggerTestModel()">Test Model</button>
+    <button onclick="startMapBuilding()">Map</button>
+  </div>
+
+  <div id="collectData" class="view">
+    <button class="label-button" onclick="sendLabel('grass')">Grass</button>
+    <button class="label-button" onclick="sendLabel('gravel')">Gravel</button>
+    <button class="label-button" onclick="sendLabel('asphalt')">Asphalt</button>
+    <button class="label-button" onclick="sendLabel('cobblestone')">Cobblestone</button>
+    <button class="label-button" onclick="sendLabel('stones')">Stones</button>
+    <button id="stopButton" onclick="stopRecording()">Stop recording</button>
+    <button id="backButtonCollect" onclick="navigateTo('home')">Back</button>
+  </div>
+
+  <div id="testModel" class="view">
+    <h1 id="placeholderText">Loading...</h1>
+    <button id="stopTestButton" onclick="stopTestModel()">Stop Test</button>
+  </div>
+
+  <div id="mapPage" class="view">
+    <div id="mapContainer"></div>
+    <button id="backButtonMap" onclick="stopMapBuilding()">Back</button>
+  </div>
+
+  <div id="overlay"></div>
+</body>
+</html>
